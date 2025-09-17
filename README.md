@@ -38,7 +38,7 @@ The primary goal is to compare an active learning strategy (**Alternating Inform
 
 ## Dependencies
 
-To run this project, you will need Python 3 and the following libraries. The most critical dependency is `pystan`, which may require a C++ compiler to be installed on your system.
+To run this project, you will need Python 3.9 and the following libraries. The most critical dependency is `pystan`, which may require a C++ compiler to be installed on your system.
 
   * `numpy`
   * `scipy`
