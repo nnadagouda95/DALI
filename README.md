@@ -31,8 +31,8 @@ The primary goal is to compare an active learning strategy (**Alternating Inform
 
 ## File Structure
 
-  * `run_experiments_logistic_model_diff_methods.py`: This is the main executable script. It sets up the experiment parameters (dimensionality, number of items, etc.), runs the simulation loop, and handles the saving and plotting of results.
-  * `active_estimate_logistic_model_diff_methods.py`: This file contains the core logic. The `ActiveEstimator` class defines the Bayesian model, manages the MCMC sampling, and implements the query selection algorithms.
+  * `run_experiments_two_users.py`: This is the main executable script. It sets up the experiment parameters (dimensionality, number of items, etc.), runs the simulation loop, and handles the saving and plotting of results.
+  * `active_estimate_two_users.py`: This file contains the core logic. The `ActiveEstimator` class defines the Bayesian model, manages the MCMC sampling, and implements the query selection algorithms.
 
 -----
 
