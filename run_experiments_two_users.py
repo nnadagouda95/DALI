@@ -7,7 +7,7 @@ import time
 import sys
 from enum import Enum
 from matplotlib import pyplot as plt
-from active_estimate_two_users import ActiveEstimator, AdaptType, pair2hyperplane, normalized_kendall_tau_distance_sampled
+from active_estimate_closed_form_posterior import ActiveEstimator, AdaptType, pair2hyperplane, normalized_kendall_tau_distance_sampled
 import os, sys
 import datetime
 
