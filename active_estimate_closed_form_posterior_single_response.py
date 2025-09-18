@@ -92,9 +92,9 @@ class ActiveEstimator():
     def __init__(self):
         pass
 
-    
+
     def initialize(self, embedding, k, method, seed, model_path,
-                   path, init_mean_W, init_cov_W, pair_samp_rate=0.01, 
+                   path, init_mean_W_group, init_cov_W_group, pair_samp_rate=0.01,
                    diagnostic=False):
         """
         Initializes the search object for two users.
@@ -112,15 +112,17 @@ class ActiveEstimator():
         # Hardcoded sample count for posterior sampling
         self.Nsamples = 4000
 
-        # State variables are lists of size 2 (one for each user)
-        self.mean_W = [init_mean_W[0].copy(), init_mean_W[1].copy()]
-        self.cov_W = [init_cov_W[0].copy(), init_cov_W[1].copy()]
-        self.W_samples = [None, None]
+        # State variables are lists of size nusers (one for each user)
+        nusers = len(init_mean_W_group)
+        self.nusers = nusers
+        self.mean_W = np.stack(init_mean_W_group)
+        self.cov_W = np.stack(init_cov_W_group)
+        self.W_samples = [None] * nusers
 
         # User-specific observation data
-        self.y_vec = [[], []]
-        self.queries_for_user = [[], []]
-        
+        self.y_vec = [[] for _ in range(nusers)]
+        self.queries_for_user = [[] for _ in range(nusers)]
+
         # Global list of all queries made
         self.oracle_queries_made = []
         self.diagnostic = diagnostic
@@ -134,37 +136,41 @@ class ActiveEstimator():
         if self.queries_for_user[user_index]:
             p, q = self.queries_for_user[user_index][-1]
             y = self.y_vec[user_index][-1]
-            
+
             # The label 'y' from the oracle is {0, 1}. Convert to {-1, 1} for the update rule.
             y_update = 1.0 if y == 1 else -1.0
-            
+
             self.mean_W[user_index], self.cov_W[user_index] = update_given_y_logistic(
                 self.k, p, q, y_update, self.cov_W[user_index], self.mean_W[user_index]
             )
-        
+
         # Sample from the updated (or prior) Gaussian posterior
         try:
             W_samples = np.random.multivariate_normal(
-            self.mean_W[user_index], self.cov_W[user_index], size=self.Nsamples)
+                self.mean_W[user_index], self.cov_W[user_index], size=self.Nsamples
+            )
         except np.linalg.LinAlgError:
             # If covariance is not positive semi-definite, add jitter
             jitter = np.eye(self.D) * 1e-6
             W_samples = np.random.multivariate_normal(
                 self.mean_W[user_index], self.cov_W[user_index] + jitter, size=self.Nsamples)
-        
+
         self.W_samples[user_index] = W_samples
 
-        self.mean_G = (self.mean_W[0] + self.mean_W[1])/2
-        self.cov_G = (self.cov_W[0] + self.cov_W[1])/4
-        
+        self.mean_G = np.mean(self.mean_W, axis=0)
+        nusers = self.cov_W.shape[0]
+        self.cov_G = np.mean(self.cov_W, axis=0)/nusers
+
         try:
             G_samples = np.random.multivariate_normal(
-            self.mean_G, self.cov_G, size=self.Nsamples)
+                self.mean_G, self.cov_G, size=self.Nsamples
+            )
         except np.linalg.LinAlgError:
             # If covariance is not positive semi-definite, add jitter
             jitter = np.eye(self.D) * 1e-6
             G_samples = np.random.multivariate_normal(
-                self.mean_G, self.cov_G + jitter, size=self.Nsamples)
+                self.mean_G, self.cov_G + jitter, size=self.Nsamples
+            )
         self.G_samples = G_samples
 
     def select_query(self):
@@ -176,12 +182,12 @@ class ActiveEstimator():
         print('Npairs/M:', self.Npairs)
         Pairs = self.get_random_pairs(self.N, self.Npairs)
         value = np.zeros((self.Npairs,))
-        
+
         if 'Alternating' in self.method.name:
             query_number = len(self.oracle_queries_made)
-            user_to_optimize = query_number % 2  # Alternates between 0 and 1
+            user_to_optimize = query_number % self.nusers  # Alternates between users
             print(f"Selecting query based on User {user_to_optimize + 1}'s posterior")
-            
+
             for j, ind in enumerate(Pairs):
                 p = self.embedding[ind,:]
                 (A_emb, tau_emb, B_emb) = pair2hyperplane(p)
@@ -196,13 +202,17 @@ class ActiveEstimator():
                 p = self.embedding[ind,:]
                 (A_emb, tau_emb, B_emb) = pair2hyperplane(p)
                 # Sum of metric for both users
-                e1, mi1 = self.evaluate_pair(A_emb, tau_emb, B_emb, self.W_samples[0])
-                e2, mi2 = self.evaluate_pair(A_emb, tau_emb, B_emb, self.W_samples[1])
+                e = []
+                mi = []
+                for W_samples_i in self.W_samples:
+                    e_i, mi_i = self.evaluate_pair(A_emb, tau_emb, B_emb, W_samples_i)
+                    e.append(e_i)
+                    mi.append(mi_i)
                 if self.method == AdaptType.INFOGAIN:
-                    value[j] = mi1 + mi2
+                    value[j] = sum(mi)
                 else: # Uncertainty
-                    value[j] = e1 + e2
-        
+                    value[j] = sum(e)
+
         elif self.method == AdaptType.INFOGAIN_MIDPOINT:
             for j, ind in enumerate(Pairs):
                 p = self.embedding[ind,:]
@@ -213,11 +223,11 @@ class ActiveEstimator():
         else: # Random
             ind = np.random.choice(len(Pairs))
             return self.embedding[Pairs[ind],:]
-        
+
         # Select the best pair based on the calculated values
         best_ind = Pairs[np.argmax(value)]
         return self.embedding[best_ind,:]
-    
+
 
     def add_observation(self, p, oracle_out, user_index):
         """
@@ -226,13 +236,13 @@ class ActiveEstimator():
         self.y_vec[user_index].append(oracle_out['y'])
         self.queries_for_user[user_index].append(p)
         self.oracle_queries_made.append(p)
-    
-    
+
+
     def getEstimates(self):
         """
         Returns estimates of user points for both users.
         """
-        return self.mean_W[0], self.mean_W[1]
+        return self.mean_W
 
 
     def evaluate_pair(self, a, tau, b, W_samples):
@@ -243,14 +253,14 @@ class ActiveEstimator():
             self.binary_entropy(Lik))
         entropy = self.binary_entropy(Ftilde)
         return entropy, mutual_info
-    
+
 
     def likelihood_vec(self, a, tau, b, W):
         # mutual information support function
         num = self.k*(np.dot(W,a) - tau)
         z = num
         return z, sp.special.expit(z)
-        
+
 
     def binary_entropy(self, x):
         # mutual information support function
@@ -262,7 +272,7 @@ class ActiveEstimator():
         indices = [(int(i[0]), int(i[1])) for i in indices if i[0] != i[1]]
         assert len(indices) >= M
         return indices[0:M]
-    
+
 
 class AdaptType(Enum):
     RANDOM = 0
@@ -271,7 +281,7 @@ class AdaptType(Enum):
     ALTERNATING_INFOGAIN = 3
     ALTERNATING_UNCERTAINTY = 4
     INFOGAIN_MIDPOINT = 5
-    
+
 
 
 def pair2hyperplane(p):
