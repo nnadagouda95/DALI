@@ -242,7 +242,7 @@ class ActiveEstimator():
         """
         Returns estimates of user points for both users.
         """
-        return self.mean_W
+        return self.mean_W, self.mean_G
 
 
     def evaluate_pair(self, a, tau, b, W_samples):

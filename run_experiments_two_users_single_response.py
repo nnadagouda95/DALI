@@ -10,6 +10,7 @@ from matplotlib import pyplot as plt
 from active_estimate_closed_form_posterior_single_response import ActiveEstimator, AdaptType, pair2hyperplane, normalized_kendall_tau_distance_sampled
 import os, sys
 import datetime
+import copy
 
 
 
@@ -88,6 +89,7 @@ def main():
                 'kt_vec': [],
             } for i in range(nusers)
         }
+        out_data[e[0]]['G'] = copy.deepcopy(out_data[e[0]]['user0'])
 
     for trial in range(ntrials):
         seed = seeds[trial]
@@ -102,11 +104,12 @@ def main():
             np.random.multivariate_normal(mean=mu_sim, cov=cov_sim)
             for mu_sim, cov_sim in zip(mu_sim_group, cov_sim_group)
         ])
+        G_sim = np.mean(W_sim_group, axis=0)
 
         for e in exper_types:
             print('trial', trial+1, '/', ntrials, 'experiment', e[0])
 
-            W_hist_group, timer_vec = run_experiment(e[1], W_sim_group, mu_sim_group, cov_sim_group, seed)
+            W_hist_group, G_hist, timer_vec = run_experiment(e[1], W_sim_group, mu_sim_group, cov_sim_group, seed)
 
             # Process results for users
             for i, (W_sim, W_hist) in enumerate(zip(W_sim_group, W_hist_group)):
@@ -118,6 +121,15 @@ def main():
                 o['timer_vec'].append(timer_vec)
                 o['error_vec'].append(error)
                 o['kt_vec'].append(kt_dist)
+
+            error = np.linalg.norm(G_hist - G_sim, axis=1) ** 2 / np.linalg.norm(G_sim) ** 2
+            kt_dist = normalized_kendall_tau_distance_sampled(G_hist, G_sim, Embedding)
+            o = out_data[e[0]]['G']
+            o['W_hist'].append(W_hist)
+            o['W_sim'].append(W_sim)
+            o['timer_vec'].append(timer_vec)
+            o['error_vec'].append(error)
+            o['kt_vec'].append(kt_dist)
 
             print('\n')
 
@@ -154,6 +166,33 @@ def main():
             fig.set_size_inches(12, 9)
             fig.savefig(filePath + '/' + config['file'], dpi=100, bbox_inches='tight')
 
+    fig_mse, ax_mse = plt.subplots()
+    fig_kt, ax_kt = plt.subplots()
+
+    for e in exper_types:
+        # User plots
+        o = out_data[e[0]]['G']
+        error_val = np.array(o['error_vec'])
+        ax_mse.plot(x, np.median(error_val, axis=0), linewidth=4, label=e[0])
+        ax_mse.fill_between(x, np.quantile(error_val, 0.25, axis=0), np.quantile(error_val, 0.75, axis=0), alpha=0.2)
+        kt_val = np.array(o['kt_vec'])
+        ax_kt.plot(x, np.median(kt_val, axis=0), linewidth=4, label=e[0])
+        ax_kt.fill_between(x, np.quantile(kt_val, 0.25, axis=0), np.quantile(kt_val, 0.75, axis=0), alpha=0.2)
+
+    plot_configs = [
+        {'ax': ax_mse, 'fig': fig_mse, 'ylabel': 'MSE', 'title': f'Consensus (G) MSE', 'file': 'mse_plot_G.png', 'yscale': 'log'},
+        {'ax': ax_kt, 'fig': fig_kt, 'ylabel': 'KT dist', 'title': f'Consensus (G) KT Distance', 'file': f'kt_plot_G.png'},
+    ]
+
+    for config in plot_configs:
+        ax, fig = config['ax'], config['fig']
+        ax.set_xlabel('Number of queries'); ax.set_ylabel(config['ylabel'])
+        if 'yscale' in config: ax.set_yscale(config['yscale'])
+        ax.set_title(f"{config['title']} | D: {D}, N: {N}, k: {k}")
+        leg = ax.legend(prop={'size': 20}); leg.get_frame().set_facecolor('none'); leg.get_frame().set_linewidth(0.0)
+        fig.set_size_inches(12, 9)
+        fig.savefig(filePath + '/' + config['file'], dpi=100, bbox_inches='tight')
+
 
 def run_experiment(adaptive, W_sim_group, mu_sim_group, cov_sim_group, seed):
     # A single estimator manages both users, but updates them one by one
@@ -167,6 +206,7 @@ def run_experiment(adaptive, W_sim_group, mu_sim_group, cov_sim_group, seed):
         return {'y': y}
 
     W_hist_group = [np.zeros((M+1, D)) for _ in range(nusers)]
+    G_hist = np.zeros((M+1, D))
     timer_vec = np.zeros(M+1)
     tic = time.time()
 
@@ -176,9 +216,10 @@ def run_experiment(adaptive, W_sim_group, mu_sim_group, cov_sim_group, seed):
 
     for j in range(M):
         # Store estimate before query j
-        W_est_group = estimator.getEstimates()
+        W_est_group, G_est = estimator.getEstimates()
         for W_hist, W_est in zip(W_hist_group, W_est_group):
             W_hist[j, :] = W_est
+        G_hist[j, :] = G_est
         timer_vec[j] = time.time() - tic
 
         print(f"Measurement {j+1} / {M}")
@@ -200,12 +241,13 @@ def run_experiment(adaptive, W_sim_group, mu_sim_group, cov_sim_group, seed):
         estimator.update_posterior(user_to_query)
 
     # Store the final estimate after all M queries
-    W_est_group = estimator.getEstimates()
+    W_est_group, G_est = estimator.getEstimates()
     for W_hist, W_est in zip(W_hist_group, W_est_group):
         W_hist[M, :] = W_est
+    G_hist[M, :] = G_est
     timer_vec[M] = time.time() - tic
 
-    return W_hist_group, timer_vec
+    return W_hist_group, G_hist, timer_vec
 
 if __name__ == "__main__":
     main()
